@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Whale Sightings — Live Map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css"/>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f0f2f4;
+  color: #1a2a3a;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+header {
+  background: #1a2a3a;
+  border-bottom: 1px solid #0d1828;
+  padding: 0 20px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+header h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #7ecfef;
+  white-space: nowrap;
+}
+header h1 span { color: #fff; }
+
+.sep { width: 1px; height: 24px; background: #2e4258; }
+
+.ctrl-group { display: flex; align-items: center; gap: 8px; }
+.ctrl-group label { font-size: 0.75rem; color: #7a9ab8; white-space: nowrap; }
+
+input[type=range] {
+  -webkit-appearance: none;
+  width: 80px; height: 4px;
+  background: #2e4258;
+  border-radius: 2px;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: #7ecfef;
+  border-radius: 50%;
+}
+
+#days-val { font-size: 0.75rem; color: #7ecfef; min-width: 2.5ch; }
+
+/* ── Poll status ─────────────────────────────────────────── */
+#poll-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: #7a9ab8;
+  white-space: nowrap;
+}
+#poll-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #2e7d32;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+#poll-dot.fetching { background: #f9a825; animation: pulse 0.8s infinite alternate; }
+#poll-dot.error    { background: #e53935; }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.3; } }
+
+/* ── Main area ───────────────────────────────────────────── */
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* Map wrapper — needed so the species control can be abs-positioned over the map */
+#map-wrap { position: relative; flex: 1; }
+#map { width: 100%; height: 100%; }
+
+/* ── Species control (overlay on map) ───────────────────── */
+#species-ctrl {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  background: rgba(26, 42, 58, 0.93);
+  border: 1px solid #2e4258;
+  border-radius: 7px;
+  padding: 8px 0;
+  min-width: 178px;
+  backdrop-filter: blur(6px);
+  user-select: none;
+}
+.sp-ctrl-title {
+  font-size: 0.65rem;
+  color: #4a6a88;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 11px 6px;
+  border-bottom: 1px solid #2e4258;
+  margin-bottom: 4px;
+}
+.sp-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.sp-row:hover { background: rgba(126,207,239,0.07); }
+.sp-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255,255,255,0.35);
+  transition: opacity 0.2s;
+}
+.sp-label {
+  font-size: 0.76rem;
+  color: #c8e4f0;
+  flex: 1;
+  transition: opacity 0.2s;
+}
+.sp-count {
+  font-size: 0.67rem;
+  color: #4a6a88;
+  min-width: 2ch;
+  text-align: right;
+}
+.sp-row.off .sp-dot,
+.sp-row.off .sp-label,
+.sp-row.off .sp-count { opacity: 0.3; }
+
+/* ── Feed sidebar ────────────────────────────────────────── */
+#feed {
+  width: 270px;
+  flex-shrink: 0;
+  background: #111e2e;
+  border-left: 1px solid #1e3a5f;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#feed-header {
+  padding: 9px 14px;
+  border-bottom: 1px solid #1e3a5f;
+  font-size: 0.68rem;
+  color: #7ecfef;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0d1828;
+}
+#feed-count { color: #4a6a88; font-weight: 400; }
+#strand-summary {
+  padding: 7px 14px;
+  border-bottom: 1px solid #1e3a5f;
+  background: #0d1828;
+  font-size: 0.7rem;
+  color: #7a9ab8;
+  display: none;
+}
+#strand-summary .ss-count { color: #e53935; font-weight: 600; }
+#strand-summary .ss-recent { color: #4a6a88; font-size: 0.66rem; margin-top: 2px; }
+#feed-list {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #1e3a5f #111e2e;
+}
+.feed-item {
+  padding: 9px 14px;
+  border-bottom: 1px solid #0d1828;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.feed-item:hover { background: #162030; }
+.feed-item.is-new { animation: feed-flash 2s ease-out forwards; }
+@keyframes feed-flash {
+  0%   { background: rgba(126,207,239,0.18); }
+  100% { background: transparent; }
+}
+.fi-species {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #e8f4f8;
+  line-height: 1.3;
+}
+.fi-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.fi-meta {
+  font-size: 0.68rem;
+  color: #4a6a88;
+  margin-top: 2px;
+  display: flex;
+  justify-content: space-between;
+}
+.fi-time { color: #5a7a9a; }
+.fi-trusted {
+  font-size: 0.62rem;
+  background: #1e3a5f;
+  color: #7ecfef;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 4px;
+}
+
+/* ── MapLibre popup overrides ────────────────────────────── */
+.maplibregl-popup-content {
+  background: #0d1f3c !important;
+  border: 1px solid #2a4a6a !important;
+  color: #e8f4f8 !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.45) !important;
+  padding: 10px 14px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.maplibregl-popup-close-button {
+  color: #7a9ab8 !important;
+  font-size: 16px !important;
+  padding: 4px 8px !important;
+}
+.maplibregl-popup-close-button:hover { color: #fff !important; }
+.maplibregl-popup-tip { border-top-color: #0d1f3c !important; }
+/* tip can be at bottom too */
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-bottom-color: #0d1f3c !important; }
+.maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color: #0d1f3c !important; border-top-color: transparent !important; }
+.maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: #0d1f3c !important; border-top-color: transparent !important; }
+.maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: #0d1f3c !important; border-top-color: transparent !important; }
+
+.pop-name { font-weight: 700; font-size: 0.95rem; }
+.pop-sci  { font-style: italic; color: #7a9ab8; font-size: 0.73rem; }
+.pop-meta { color: #a0c4d8; margin-top: 4px; font-size: 0.78rem; }
+.pop-note { margin-top: 6px; font-size: 0.75rem; color: #c8e4f0;
+            border-top: 1px solid #1e3a5f; padding-top: 6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐋 <span>Whale</span> Sightings</h1>
+  <div class="sep"></div>
+  <div class="ctrl-group">
+    <label>Last</label>
+    <input type="range" id="days-range" min="1" max="30" value="7">
+    <span id="days-val">7d</span>
+  </div>
+  <div id="poll-status">
+    <div id="poll-dot"></div>
+    <span id="poll-text">—</span>
+  </div>
+</header>
+
+<div class="main">
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="species-ctrl">
+      <div class="sp-ctrl-title">Species</div>
+      <!-- rows injected by JS -->
+    </div>
+  </div>
+
+  <div id="feed">
+    <div id="feed-header">
+      Live feed <span id="feed-count"></span>
+    </div>
+    <div id="strand-summary"></div>
+    <div id="feed-list"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+<script>
+// ── Species registry ─────────────────────────────────────────────────────────
+// Okabe-Ito colorblind-safe palette (deuteranopia / protanopia tolerant).
+// Avoids red-vs-green confusion; relies on blue/orange/purple/black axis.
+// Slightly darkened from the canonical values for contrast on Positron's light basemap.
+const SPECIES = {
+  'Eschrichtius robustus':      { label: 'Gray Whale',         color: '#555555' },  // neutral gray
+  'Megaptera novaeangliae':     { label: 'Humpback Whale',     color: '#0072B2' },  // deep blue
+  'Orcinus orca':               { label: 'Orca',               color: '#111111' },  // near-black
+  'Balaenoptera musculus':      { label: 'Blue Whale',         color: '#2496c8' },  // sky blue (darkened for contrast)
+  'Balaenoptera physalus':      { label: 'Fin Whale',          color: '#008A63' },  // bluish-green (teal, not pure green)
+  'Balaenoptera borealis':      { label: 'Sei Whale',          color: '#E69F00' },  // amber/orange
+  'Balaenoptera acutorostrata': { label: 'Minke Whale',        color: '#C45A00' },  // vermillion (orange-red, not pure red)
+  'Delphinapterus leucas':      { label: 'Beluga',             color: '#CC79A7' },  // reddish-purple / rose
+  'Phocoena phocoena':          { label: 'Harbor Porpoise',    color: '#332288' },  // dark indigo
+  'Tursiops truncatus':         { label: 'Bottlenose Dolphin', color: '#7a5100' },  // dark amber-brown
+};
+
+function layerId(sci) {
+  return 'sp__' + sci.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+}
+
+const layerVisible  = Object.fromEntries(Object.keys(SPECIES).map(k => [k, true]));
+const speciesCounts = Object.fromEntries(Object.keys(SPECIES).map(k => [k, 0]));
+
+// All sightings accumulated this session (for setData rebuilds)
+const allSightings = [];   // raw API result objects
+const seenIds      = new Set();
+const feedItems    = [];   // { id, sci, s }  newest first
+
+// ── Vessel categories ────────────────────────────────────────────────────────
+// Warm/saturated = higher ship-strike concern; cool/muted = lower concern
+const VESSEL_CATS = {
+  tanker:    { label: 'Tanker',          color: '#C0392B' },  // red    — highest concern
+  cargo:     { label: 'Cargo',           color: '#E67E22' },  // orange
+  passenger: { label: 'Passenger',       color: '#8E44AD' },  // purple
+  hsc:       { label: 'High Speed',      color: '#D4AC0D' },  // amber
+  fishing:   { label: 'Fishing',         color: '#2471A3' },  // blue
+  tug:       { label: 'Tug / Towing',    color: '#717D7E' },  // gray
+  sailing:   { label: 'Sailing',         color: '#148F77' },  // teal
+  pleasure:  { label: 'Pleasure Craft',  color: '#AAB7B8' },  // light gray
+  special:   { label: 'Special',         color: '#1E8449' },  // green
+  unknown:   { label: 'Unknown',         color: '#2E86C1' },  // slate blue
+};
+
+function makeVesselArrow(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="20" viewBox="0 0 16 20">
+    <polygon points="8,1 15,18 8,13 1,18"
+             fill="${color}" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linejoin="round"/>
+  </svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
+// ── Vessel state ─────────────────────────────────────────────────────────────
+let vesselVisible   = true;
+let vesselPollTimer = null;
+const VESSEL_POLL_MS = 15_000;   // truth updates every 15s
+
+// Dead-reckoning state: mmsi → { lat, lon, sog_ms, hdg_rad, updatedAt, ...props }
+const vesselState = {};
+const SOG_MIN_KN  = 0.3;   // below this we don't animate (anchored / drifting)
+const DR_FPS      = 8;      // animation frames per second
+
+// ── Build species control rows ────────────────────────────────────────────────
+const ctrl = document.getElementById('species-ctrl');
+
+// Vessels toggle row (top of panel, separated)
+const vesselRow = document.createElement('div');
+vesselRow.className = 'sp-row';
+vesselRow.id = 'vessel-toggle-row';
+vesselRow.innerHTML = `
+  <div class="sp-dot" style="background:#1565c0; border-color:rgba(255,255,255,0.5)"></div>
+  <span class="sp-label">Vessels (AIS)</span>
+  <span class="sp-count" id="sc-vessels">—</span>`;
+vesselRow.addEventListener('click', toggleVessels);
+ctrl.appendChild(vesselRow);
+
+// Strandings toggle row
+let strandingVisible = true;
+const strandRow = document.createElement('div');
+strandRow.className = 'sp-row';
+strandRow.id = 'stranding-toggle-row';
+strandRow.innerHTML = `
+  <div class="sp-dot" style="background:#333; border:2px solid #e53935; border-radius:0; transform:rotate(45deg); width:10px; height:10px; margin:0 5px 0 2px; flex-shrink:0"></div>
+  <span class="sp-label">Strandings</span>
+  <span class="sp-count" id="sc-strandings">—</span>`;
+strandRow.addEventListener('click', toggleStrandings);
+ctrl.appendChild(strandRow);
+
+// Divider
+const div = document.createElement('div');
+div.style.cssText = 'border-top:1px solid #2e4258; margin:4px 0;';
+ctrl.appendChild(div);
+
+Object.entries(SPECIES).forEach(([sci, { label, color }]) => {
+  const row = document.createElement('div');
+  row.className = 'sp-row';
+  row.dataset.sci = sci;
+  row.innerHTML = `
+    <div class="sp-dot" style="background:${color}"></div>
+    <span class="sp-label">${label}</span>
+    <span class="sp-count" id="sc-${layerId(sci)}">0</span>`;
+  row.addEventListener('click', () => toggleLayer(sci, row));
+  ctrl.appendChild(row);
+});
+
+function updateCountBadge(sci) {
+  const el = document.getElementById('sc-' + layerId(sci));
+  if (el) el.textContent = speciesCounts[sci] || '';
+}
+
+// ── Map init ─────────────────────────────────────────────────────────────────
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/positron',
+  center: [-122.5, 37.8],
+  zoom: 7,
+  attributionControl: false,  // suppress default bottom-right; we add one on the left below
+});
+
+map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
+
+let currentPopup = null;
+
+map.on('load', async () => {
+  // Single GeoJSON source; layers filter by scientific_name
+  map.addSource('sightings', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+
+  Object.entries(SPECIES).forEach(([sci, { color }]) => {
+    const id = layerId(sci);
+    map.addLayer({
+      id,
+      type: 'circle',
+      source: 'sightings',
+      filter: ['==', ['get', 'scientific_name'], sci],
+      paint: {
+        'circle-radius':       ['interpolate', ['linear'], ['zoom'], 4, 4, 8, 6, 12, 9],
+        'circle-color':        color,
+        'circle-stroke-width': 1.5,
+        'circle-stroke-color': 'rgba(255,255,255,0.75)',
+        'circle-opacity':      0.9,
+      },
+    });
+
+    map.on('click', id, (e) => {
+      const props = e.features[0].properties;
+      const sp    = SPECIES[sci];
+      if (currentPopup) currentPopup.remove();
+      currentPopup = new maplibregl.Popup({ maxWidth: '300px', offset: 12 })
+        .setLngLat(e.lngLat)
+        .setHTML(buildPopup(props, sp.color))
+        .addTo(map);
+    });
+
+    map.on('mouseenter', id, () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', id, () => { map.getCanvas().style.cursor = '';        });
+  });
+
+  // ── Vessel layer — load one arrow image per category ──────────────────────
+  await Promise.all(Object.entries(VESSEL_CATS).map(([cat, { color }]) =>
+    new Promise(resolve => {
+      const img = new Image(16, 20);
+      img.onload = () => { map.addImage(`va-${cat}`, img); resolve(); };
+      img.src = makeVesselArrow(color);
+    })
+  ));
+
+  map.addSource('vessels', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+
+  map.addSource('vessel-tracks', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+
+  map.addLayer({
+    id: 'vessel-tracks',
+    type: 'line',
+    source: 'vessel-tracks',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: {
+      'line-color':   '#1565c0',
+      'line-width':   1.5,
+      'line-opacity': 0.35,
+    },
+  });
+
+  // Match expression: picks the pre-loaded image for each vessel's category
+  const catMatch = ['match', ['get', 'category'],
+    ...Object.keys(VESSEL_CATS).flatMap(c => [c, `va-${c}`]),
+    'va-unknown',
+  ];
+
+  map.addLayer({
+    id: 'vessels',
+    type: 'symbol',
+    source: 'vessels',
+    layout: {
+      'icon-image':              catMatch,
+      'icon-rotate':             ['coalesce', ['get', 'heading'], ['get', 'cog']],
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap':      true,
+      'icon-ignore-placement':   true,
+      // Scale by vessel length at each zoom level
+      'icon-size': ['interpolate', ['linear'], ['zoom'],
+        5,  ['interpolate', ['linear'], ['coalesce', ['get', 'length'], 0],   0, 0.35, 400, 0.65],
+        9,  ['interpolate', ['linear'], ['coalesce', ['get', 'length'], 0],   0, 0.6,  400, 1.1 ],
+        12, ['interpolate', ['linear'], ['coalesce', ['get', 'length'], 0],   0, 0.9,  400, 1.8 ],
+      ],
+    },
+  });
+
+  map.on('click', 'vessels', (e) => {
+    const p = e.features[0].properties;
+    if (currentPopup) currentPopup.remove();
+    const sog     = p.sog  != null ? `${p.sog} kn` : '—';
+    const hdg     = p.heading != null ? `${p.heading}°` : `${p.cog}° (COG)`;
+    const catInfo = VESSEL_CATS[p.category] || VESSEL_CATS.unknown;
+    const dims    = p.length > 0
+      ? `${p.length}m × ${p.beam}m` + (p.draught > 0 ? ` · ${p.draught}m draught` : '')
+      : null;
+    const dest    = p.destination && p.destination !== 'UNDEFINED' ? p.destination : null;
+    const imo     = p.imo > 0 ? `IMO ${p.imo}` : null;
+
+    currentPopup = new maplibregl.Popup({ maxWidth: '280px', offset: 12 })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div class="pop-name" style="color:${catInfo.color}">${p.name}</div>
+        <div class="pop-sci">${catInfo.label}${p.callsign ? ' · ' + p.callsign : ''}</div>
+        <div class="pop-meta">
+          ${dims  ? `<div>${dims}</div>` : ''}
+          ${dest  ? `<div>Dest: ${dest}</div>` : ''}
+          ${imo   ? `<div style="color:#4a6a88">${imo} · MMSI ${p.mmsi}</div>` : `<div style="color:#4a6a88">MMSI ${p.mmsi}</div>`}
+          <div>Speed ${sog} · Heading ${hdg}</div>
+          <div style="color:#4a6a88;font-size:0.7rem">${fmtLocalTime(p.updated_at)}</div>
+        </div>`)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'vessels', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'vessels', () => { map.getCanvas().style.cursor = '';        });
+
+  // ── Strandings layer ─────────────────────────────────────────────────────
+  map.addSource('strandings', {
+    type: 'geojson',
+    data: { type: 'FeatureCollection', features: [] },
+  });
+
+  map.addLayer({
+    id: 'strandings',
+    type: 'circle',
+    source: 'strandings',
+    paint: {
+      'circle-radius':       ['interpolate', ['linear'], ['zoom'], 4, 4, 8, 6, 12, 9],
+      'circle-color':        '#1a1a1a',
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#e53935',
+      'circle-opacity':      0.85,
+    },
+  });
+
+  map.on('click', 'strandings', (e) => {
+    const p = e.features[0].properties;
+    if (currentPopup) currentPopup.remove();
+    const name = p.common_name
+      ? `${p.common_name} (${p.species})`
+      : (p.species || 'Unknown cetacean');
+    currentPopup = new maplibregl.Popup({ maxWidth: '260px', offset: 12 })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div class="pop-name" style="color:#e53935">☠ Stranding</div>
+        <div class="pop-sci">${name}</div>
+        <div class="pop-meta">
+          ${p.date ? `<div>${p.date}</div>` : ''}
+          ${p.place ? `<div>${p.place}</div>` : ''}
+          ${p.url ? `<div><a href="${p.url}" target="_blank" style="color:#7ecfef">iNaturalist ↗</a></div>` : ''}
+        </div>`)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'strandings', () => { map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', 'strandings', () => { map.getCanvas().style.cursor = '';        });
+
+  // Boot after layers are ready
+  fullReload();
+  pollVessels();
+  fetchStrandings();
+  requestAnimationFrame(drLoop);
+});
+
+function toggleLayer(sci, row) {
+  layerVisible[sci] = !layerVisible[sci];
+  row.classList.toggle('off', !layerVisible[sci]);
+  map.setLayoutProperty(layerId(sci), 'visibility', layerVisible[sci] ? 'visible' : 'none');
+}
+
+function rebuildGeoJSON() {
+  map.getSource('sightings').setData({
+    type: 'FeatureCollection',
+    features: allSightings.map(s => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [parseFloat(s.longitude), parseFloat(s.latitude)] },
+      properties: {
+        id:              s.id,
+        name:            s.name            || '',
+        scientific_name: s.scientific_name || '',
+        number_sighted:  s.number_sighted  || 0,
+        created:         s.created         || '',
+        comments:        s.comments        || '',
+        trusted:         s.trusted         ? 1 : 0,
+        lat:             parseFloat(s.latitude),
+        lon:             parseFloat(s.longitude),
+      },
+    })),
+  });
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function stripHtml(s) { return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+function fmtCoord(lat, lon) {
+  return `${Math.abs(lat).toFixed(3)}°${lat>=0?'N':'S'} ${Math.abs(lon).toFixed(3)}°${lon<0?'W':'E'}`;
+}
+
+function buildPopup(p, color) {
+  const name  = p.name || p.scientific_name || 'Unknown';
+  const count = p.number_sighted ? `${p.number_sighted}× ` : '';
+  const ts    = fmtLocalTime(p.created);
+  const coord = fmtCoord(p.lat || 0, p.lon || 0);
+  const badge = p.trusted ? '<span class="fi-trusted">✓ trusted</span>' : '';
+  const note  = p.comments
+    ? `<div class="pop-note">${stripHtml(p.comments).slice(0, 220)}</div>`
+    : '';
+  return `<div class="pop-name" style="color:${color}">${count}${name}</div>
+          <div class="pop-sci">${p.scientific_name || ''}</div>
+          <div class="pop-meta">${ts}<br>${coord} ${badge}</div>${note}`;
+}
+
+// ── Feed ──────────────────────────────────────────────────────────────────────
+function fmtLocalTime(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr.replace(' ', 'T') + (isoStr.includes('+') || isoStr.endsWith('Z') ? '' : 'Z'));
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function timeAgo(isoStr) {
+  const d    = new Date(isoStr.replace(' ', 'T') + (isoStr.includes('+') ? '' : 'Z'));
+  const diff = Math.max(0, Math.floor((Date.now() - d) / 1000));
+  if (diff < 60)    return `${diff}s ago`;
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function buildFeedEl(s, sci, isNew) {
+  const sp    = SPECIES[sci] || {};
+  const color = sp.color || '#888';
+  const label = sp.label || s.name || sci;
+  const count = s.number_sighted ? `${s.number_sighted}×` : '';
+  const badge = s.trusted ? '<span class="fi-trusted">✓</span>' : '';
+  const coord = fmtCoord(parseFloat(s.latitude), parseFloat(s.longitude));
+
+  const el = document.createElement('div');
+  el.className = 'feed-item' + (isNew ? ' is-new' : '');
+  el.dataset.id = s.id;
+  el.innerHTML = `
+    <div class="fi-species">
+      <div class="fi-dot" style="background:${color}"></div>
+      ${count} ${label} ${badge}
+    </div>
+    <div class="fi-meta">
+      <span>${coord}</span>
+      <span class="fi-time">${timeAgo(s.created)}</span>
+    </div>`;
+
+  el.addEventListener('click', () => {
+    const lng = parseFloat(s.longitude);
+    const lat = parseFloat(s.latitude);
+    map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 10), duration: 800 });
+    setTimeout(() => {
+      if (currentPopup) currentPopup.remove();
+      currentPopup = new maplibregl.Popup({ maxWidth: '300px', offset: 12 })
+        .setLngLat([lng, lat])
+        .setHTML(buildPopup({
+          name: s.name, scientific_name: s.scientific_name,
+          number_sighted: s.number_sighted, created: s.created,
+          comments: s.comments, trusted: s.trusted,
+          lat, lon: lng,
+        }, color))
+        .addTo(map);
+    }, 900);
+  });
+
+  return el;
+}
+
+function refreshFeedTimes() {
+  document.querySelectorAll('.feed-item').forEach(el => {
+    const entry = feedItems.find(f => f.s.id == el.dataset.id);
+    if (!entry) return;
+    const timeEl = el.querySelector('.fi-time');
+    if (timeEl) timeEl.textContent = timeAgo(entry.s.created);
+  });
+}
+setInterval(refreshFeedTimes, 60_000);
+
+// ── Polling ───────────────────────────────────────────────────────────────────
+const POLL_MS   = 5 * 60 * 1000;
+let pollTimer   = null;
+let lastPollAt  = null;
+
+function setPollStatus(state, text) {
+  document.getElementById('poll-dot').className  = state === 'ok' ? '' : state;
+  document.getElementById('poll-text').textContent = text;
+}
+function updatePollAge() {
+  if (!lastPollAt) return;
+  const s = Math.floor((Date.now() - lastPollAt) / 1000);
+  setPollStatus('ok', s < 5 ? 'just updated' : s < 60 ? `${s}s ago` : `${Math.floor(s/60)}m ago`);
+}
+setInterval(updatePollAge, 10_000);
+
+function getDays() { return parseInt(document.getElementById('days-range').value, 10); }
+
+async function fetchAndMerge(isFullReload) {
+  setPollStatus('fetching', 'fetching…');
+  const params = new URLSearchParams({ days: getDays(), bbox: '-180,-90,180,90' });
+  let data;
+  try {
+    const r = await fetch('/api/sightings?' + params);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+  } catch (e) {
+    setPollStatus('error', 'error — will retry');
+    console.error(e);
+    return;
+  }
+
+  const results = (data.results || []).filter(s => SPECIES[s.scientific_name]);
+
+  if (isFullReload) {
+    seenIds.clear();
+    allSightings.length = 0;
+    feedItems.length    = 0;
+    document.getElementById('feed-list').innerHTML = '';
+    Object.keys(SPECIES).forEach(sci => { speciesCounts[sci] = 0; });
+  }
+
+  // Sort oldest-first; each prepend puts newest on top of feed
+  results.sort((a, b) => (a.created || '').localeCompare(b.created || ''));
+
+  const feedList = document.getElementById('feed-list');
+  let hadNew = false;
+
+  results.filter(s => !seenIds.has(s.id)).forEach(s => {
+    const sci = s.scientific_name;
+    seenIds.add(s.id);
+    allSightings.push(s);
+    speciesCounts[sci] = (speciesCounts[sci] || 0) + 1;
+
+    const isNew = !isFullReload;
+    feedList.insertBefore(buildFeedEl(s, sci, isNew), feedList.firstChild);
+    feedItems.unshift({ id: s.id, sci, s });
+    hadNew = true;
+  });
+
+  // Trim feed to 100 items
+  while (feedItems.length > 100) {
+    feedItems.pop();
+    if (feedList.lastChild) feedList.removeChild(feedList.lastChild);
+  }
+
+  if (hadNew) rebuildGeoJSON();
+
+  Object.keys(SPECIES).forEach(updateCountBadge);
+  document.getElementById('feed-count').textContent = `· ${seenIds.size}`;
+
+  lastPollAt = Date.now();
+  updatePollAge();
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => fetchAndMerge(false).then(schedulePoll), POLL_MS);
+}
+
+function fullReload() {
+  clearTimeout(pollTimer);
+  fetchAndMerge(true).then(schedulePoll);
+}
+
+// ── Dead-reckoning helpers ────────────────────────────────────────────────────
+function drPosition(state) {
+  // Project vessel forward from its last known fix using speed + heading.
+  // Returns { lat, lon } for the current moment.
+  const elapsed  = (Date.now() - state.updatedAt) / 1000;   // seconds
+  const dist_m   = state.sog_ms * elapsed;
+  const dlat     = (dist_m * Math.cos(state.hdg_rad)) / 111111;
+  const dlon     = (dist_m * Math.sin(state.hdg_rad)) /
+                   (111111 * Math.cos(state.lat * Math.PI / 180));
+  return { lat: state.lat + dlat, lon: state.lon + dlon };
+}
+
+function buildVesselFC() {
+  return {
+    type: 'FeatureCollection',
+    features: Object.values(vesselState).map(state => {
+      const pos = state.sog_ms >= SOG_MIN_KN * 0.514444
+        ? drPosition(state)
+        : { lat: state.lat, lon: state.lon };
+      return {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [pos.lon, pos.lat] },
+        properties: state.props,
+      };
+    }),
+  };
+}
+
+// Animation loop — runs continuously, updates vessel positions via dead reckoning
+let drLastFrame = 0;
+const DR_INTERVAL = 1000 / DR_FPS;
+
+function drLoop(ts) {
+  if (ts - drLastFrame >= DR_INTERVAL && map.getSource('vessels')) {
+    map.getSource('vessels').setData(buildVesselFC());
+    drLastFrame = ts;
+  }
+  requestAnimationFrame(drLoop);
+}
+
+// ── Vessel polling ────────────────────────────────────────────────────────────
+async function pollVessels() {
+  try {
+    const r    = await fetch('/api/vessels');
+    const data = await r.json();
+    const list = data.vessels || [];
+
+    // Update truth state for each vessel
+    const now = Date.now();
+    const seen = new Set();
+    list.forEach(v => {
+      const hdg = v.heading ?? v.cog;
+      vesselState[v.mmsi] = {
+        lat:       v.lat,
+        lon:       v.lon,
+        sog_ms:    v.sog * 0.514444,          // knots → m/s
+        hdg_rad:   hdg * Math.PI / 180,
+        updatedAt: now,
+        props: {
+          mmsi: v.mmsi, name: v.name,
+          sog: v.sog, cog: v.cog,
+          heading: v.heading ?? null,
+          category:   v.category,   type_label: v.type_label,
+          length:     v.length,     beam:       v.beam,
+          draught:    v.draught,    callsign:   v.callsign,
+          imo:        v.imo,        destination: v.destination,
+          updated_at: v.updated_at,
+        },
+      };
+      seen.add(v.mmsi);
+    });
+    // Drop vessels no longer in the feed
+    Object.keys(vesselState).forEach(m => { if (!seen.has(m)) delete vesselState[m]; });
+
+    // Tracks only need truth data, not animation
+    map.getSource('vessel-tracks').setData({
+      type: 'FeatureCollection',
+      features: list
+        .filter(v => v.track && v.track.length > 1)
+        .map(v => ({
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: v.track },
+          properties: { mmsi: v.mmsi, name: v.name },
+        })),
+    });
+
+    const badge = document.getElementById('sc-vessels');
+    if (badge) badge.textContent = data.ais_key ? (list.length || '0') : 'no key';
+
+  } catch (e) {
+    console.warn('vessel poll error:', e);
+  }
+  vesselPollTimer = setTimeout(pollVessels, VESSEL_POLL_MS);
+}
+
+async function fetchStrandings() {
+  try {
+    const r    = await fetch('/api/strandings');
+    const data = await r.json();
+    const list = data.strandings || [];
+    map.getSource('strandings').setData({
+      type: 'FeatureCollection',
+      features: list.map(s => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: {
+          species: s.species, common_name: s.common_name,
+          date: s.date, place: s.place, url: s.url,
+        },
+      })),
+    });
+    const badge = document.getElementById('sc-strandings');
+    if (badge) badge.textContent = list.length || '';
+
+    // Feed sidebar summary
+    const box = document.getElementById('strand-summary');
+    if (box && list.length > 0) {
+      const recent = list[0];
+      const name   = recent.common_name || recent.species || 'cetacean';
+      const where  = recent.place ? recent.place.split(',')[0] : '';
+      box.style.display = 'block';
+      box.innerHTML = `
+        <span class="ss-count">☠ ${list.length} strandings</span> (last 5 years)
+        <div class="ss-recent">Most recent: ${name}${where ? ' · ' + where : ''} · ${recent.date}</div>`;
+    }
+  } catch (e) {
+    console.warn('Strandings fetch error:', e);
+  }
+}
+
+function toggleStrandings() {
+  strandingVisible = !strandingVisible;
+  document.getElementById('stranding-toggle-row').classList.toggle('off', !strandingVisible);
+  map.setLayoutProperty('strandings', 'visibility', strandingVisible ? 'visible' : 'none');
+}
+
+function toggleVessels() {
+  vesselVisible = !vesselVisible;
+  document.getElementById('vessel-toggle-row').classList.toggle('off', !vesselVisible);
+  const vis = vesselVisible ? 'visible' : 'none';
+  map.setLayoutProperty('vessels',       'visibility', vis);
+  map.setLayoutProperty('vessel-tracks', 'visibility', vis);
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('days-range').addEventListener('input', function () {
+  document.getElementById('days-val').textContent = this.value + 'd';
+});
+document.getElementById('days-range').addEventListener('change', fullReload);
+</script>
+</body>
+</html>

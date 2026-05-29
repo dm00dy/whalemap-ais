@@ -1,0 +1,6 @@
+.env
+sightings.db
+state.json
+__pycache__/
+*.pyc
+*.pyo
